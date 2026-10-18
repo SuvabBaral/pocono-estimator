@@ -2,7 +2,8 @@ import React, { useEffect, useMemo, useState } from "react";
 import { AnimatePresence, motion } from "framer-motion";
 import PropertyMap from "./PropertyMap.jsx";
 import { calcMortgage, money } from "./mortgage.js";
-import { properties, rate as RATE, usage as USAGE, plazaFor, airbnbFor } from "./data.js";
+import { properties, rate as RATE, usage as USAGE, plazaFor, airbnbFor, cityOfProperty } from "./data.js";
+import Compare from "./Compare.jsx";
 
 const fade = { initial: { opacity: 0, y: 18 }, animate: { opacity: 1, y: 0 }, exit: { opacity: 0, y: -12 } };
 
@@ -185,9 +186,15 @@ function Plaza({ state, p }) {
   );
 }
 
-function Airbnb({ p, state }) {
+function Airbnb({ p }) {
   const [onlySimilar, setOnlySimilar] = useState(false);
-  const d = state.data;
+  const home = cityOfProperty(p);
+  const [cities, setCities] = useState([home]); // default: same city as the property
+  const d = useMemo(() => airbnbFor(p, cities), [p, cities]);
+  const state = {};
+  const allNames = d.cityList.map((c) => c.name);
+  const allOn = cities.length === allNames.length;
+  const toggle = (name) => setCities((cs) => (cs.includes(name) ? cs.filter((c) => c !== name) : [...cs, name]));
   const rows = useMemo(() => {
     if (!d) return [];
     let r = onlySimilar ? d.listings.filter((l) => l.similar) : d.listings;
@@ -206,18 +213,26 @@ function Airbnb({ p, state }) {
             <div>
               <div className="muted">Avg / night (similar beds & baths)</div>
               <div className="big good">{s.similarAvgPerNight ? <CountUp value={s.similarAvgPerNight} /> : "—"}</div>
-              <div className="muted tiny">{s.similarCount} listings with known size match (±2 bd, ±1 ba of {p.beds}bd/{p.baths}ba)</div>
+              <div className="muted tiny">{s.similarPricedCount} priced listings match ±2 bd, ±1 ba of {p.beds}bd/{p.baths}ba{s.similarAvgPerNight ? "" : " (need 3+ with known size; select more cities)"}</div>
             </div>
             <div>
               <div className="muted">Est. occupancy / year</div>
               <div className="big alt">{s.occupancyUsed != null ? `${Math.round(s.occupancyUsed * 100)}%` : "—"}</div>
-              <div className="muted tiny">{s.occupancySimilar != null ? `similar-size avg (${s.similarCount} listings)` : "all"}; all {s.enriched} analysed: {s.occupancyAll != null ? `${Math.round(s.occupancyAll * 100)}%` : "—"}</div>
+              <div className="muted tiny">{s.occupancySamples} listings analysed: {s.occupancyBasis}</div>
             </div>
             <div>
               <div className="muted">Rough gross rent / year</div>
               <div className="big">{s.estAnnualGross != null ? <CountUp value={s.estAnnualGross} /> : "—"}</div>
               <div className="muted tiny">avg nightly × 365 × occupancy (before fees, cleaning, taxes)</div>
             </div>
+          </div>
+          <div className="cities">
+            <button className={`chip ${allOn ? "on" : ""}`} onClick={() => setCities(allOn ? [home] : allNames)}>All ({d.cityList.reduce((a, c) => a + c.count, 0)})</button>
+            {d.cityList.map((c) => (
+              <button key={c.name} className={`chip ${cities.includes(c.name) ? "on" : ""}`} onClick={() => toggle(c.name)}>
+                {c.name === home ? "📍 " : ""}{c.name} ({c.count})
+              </button>
+            ))}
           </div>
           <div className="toolbar">
             <label className="switch"><input type="checkbox" checked={onlySimilar} onChange={(e) => setOnlySimilar(e.target.checked)} /> Only similar size</label>
@@ -284,7 +299,9 @@ export default function App() {
   const [sel, setSel] = useState("");
   const p = props.find((x) => x.id === sel);
   const plaza = useMemo(() => (p ? { data: plazaFor(p.id) } : {}), [p]);
-  const bnb = useMemo(() => (p ? { data: airbnbFor(p) } : {}), [p]);
+  const [mode, setMode] = useState("single");
+  const [cmpA, setCmpA] = useState(properties[0].id);
+  const [cmpB, setCmpB] = useState(properties[1].id);
 
   return (
     <div className="app">
@@ -295,19 +312,32 @@ export default function App() {
           <p className="muted">Pick a property to see pricing, mortgage, local amenities and Airbnb comps.</p>
         </motion.div>
         <div className="head-right">
-          <div className="select-wrap">
-            <select value={sel} onChange={(e) => setSel(e.target.value)}>
-              <option value="" disabled>Select a property…</option>
-              {props.map((x) => <option key={x.id} value={x.id}>{x.label}</option>)}
-            </select>
+          <div className="tabs">
+            {[["single", "Single property"], ["compare", "Compare side by side"]].map(([k, l]) => (
+              <button key={k} className={mode === k ? "on" : ""} onClick={() => setMode(k)}>
+                {mode === k && <motion.i layoutId="tab" className="tab-bg" />}<span>{l}</span>
+              </button>
+            ))}
           </div>
+          {mode === "single" && (
+            <div className="select-wrap">
+              <select value={sel} onChange={(e) => setSel(e.target.value)}>
+                <option value="" disabled>Select a property…</option>
+                {props.map((x) => <option key={x.id} value={x.id}>{x.label}</option>)}
+              </select>
+            </div>
+          )}
           {usage && <div className="usage" title="StayAPI requests used (free tier = 50)"><i style={{ width: `${(usage.used / 50) * 100}%` }} /><span>StayAPI {usage.used}/50 · static data</span></div>}
         </div>
       </header>
 
       <main>
         <AnimatePresence mode="wait">
-          {!p ? (
+          {mode === "compare" ? (
+            <motion.div key="compare" {...fade}>
+              <Compare a={cmpA} b={cmpB} setA={setCmpA} setB={setCmpB} rate={rate} />
+            </motion.div>
+          ) : !p ? (
             <motion.div key="empty" className="empty" {...fade}>
               <div className="emoji">🏡</div>
               <h2>Choose a property above</h2>
@@ -321,7 +351,7 @@ export default function App() {
                 <Plaza state={plaza} p={p} />
                 <Amenities p={p} />
                 <History p={p} />
-                <Airbnb p={p} state={bnb} />
+                <Airbnb key={p.id} p={p} />
               </div>
             </motion.div>
           )}
